@@ -79,9 +79,15 @@ public:
         // Occurs when searched computer is found
         case Event::ComputerFound:
             if (m_State == StateSeekComputer) {
-                if (event.computer->pairState == NvComputer::PS_PAIRED) {
+                if (m_EnableUserpass || event.computer->pairState == NvComputer::PS_PAIRED) {
                     m_State = StateSeekApp;
                     m_Computer = event.computer;
+                    
+                    // 设置用户名密码认证标志
+                    if (m_EnableUserpass) {
+                        m_Computer->userPassAuthEnabled = true;
+                    }
+                    
                     m_TimeoutTimer->start(APP_SEEK_TIMEOUT);
                     emit q->searchingApp();
                 } else {
@@ -103,6 +109,11 @@ public:
                     if (isNotStreaming() || isStreamingApp(app)) {
                         m_State = StateStartSession;
                         session = new Session(m_Computer, app, m_Preferences);
+                        
+                        if (m_EnableUserpass) {
+                            session->setUserCredentials(m_Username, m_Password);
+                        }
+                        
                         emit q->sessionCreated(app.name, session);
                     } else {
                         emit q->appQuitRequired(getCurrentAppName());
@@ -179,6 +190,10 @@ public:
     NvComputer *m_Computer;
     State m_State;
     QTimer *m_TimeoutTimer;
+    
+    bool m_EnableUserpass = false;
+    QString m_Username;
+    QString m_Password;
 };
 
 Launcher::Launcher(QString computer, QString app,
@@ -190,6 +205,30 @@ Launcher::Launcher(QString computer, QString app,
     d->m_ComputerName = computer;
     d->m_AppName = app;
     d->m_Preferences = preferences;
+    d->m_State = StateInit;
+    d->m_TimeoutTimer = new QTimer(this);
+    d->m_TimeoutTimer->setSingleShot(true);
+    connect(d->m_TimeoutTimer, &QTimer::timeout,
+            this, &Launcher::onTimeout);
+}
+
+// 新增：支持用户名密码认证的构造函数
+Launcher::Launcher(QString computer, QString app,
+                   StreamingPreferences* preferences,
+                   bool enableUserpass,
+                   QString username,
+                   QString password,
+                   QObject *parent)
+    : QObject(parent),
+      m_DPtr(new LauncherPrivate(this))
+{
+    Q_D(Launcher);
+    d->m_ComputerName = computer;
+    d->m_AppName = app;
+    d->m_Preferences = preferences;
+    d->m_EnableUserpass = enableUserpass;
+    d->m_Username = username;
+    d->m_Password = password;
     d->m_State = StateInit;
     d->m_TimeoutTimer = new QTimer(this);
     d->m_TimeoutTimer->setSingleShot(true);

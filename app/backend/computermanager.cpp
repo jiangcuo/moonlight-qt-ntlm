@@ -60,7 +60,15 @@ private:
         QVector<NvApp> appList;
 
         try {
-            appList = http.getAppList();
+            // 在用户名密码认证模式下，忽略SSL验证获取应用程序列表
+            // 这是安全的，因为应用程序列表不包含敏感信息
+            if (m_Computer->userPassAuthEnabled) {
+                qInfo() << "User-pass auth mode: using HTTPS with SSL verification ignored for app list";
+                appList = http.getAppList(true); // ignoreSsl = true
+            } else {
+                appList = http.getAppList(); // 正常模式使用完整SSL验证
+            }
+            
             if (appList.isEmpty()) {
                 return false;
             }
@@ -109,7 +117,7 @@ private:
             // Grab the applist if it's empty or it's been long enough that we need to refresh
             pollsSinceLastAppListFetch++;
             if (m_Computer->state == NvComputer::CS_ONLINE &&
-                    m_Computer->pairState == NvComputer::PS_PAIRED &&
+                    (m_Computer->pairState == NvComputer::PS_PAIRED || m_Computer->userPassAuthEnabled) &&
                     (m_Computer->appList.isEmpty() || pollsSinceLastAppListFetch >= POLLS_PER_APPLIST_FETCH)) {
                 // Notify prior to the app list poll since it may take a while, and we don't
                 // want to delay onlining of a machine, especially if we already have a cached list.

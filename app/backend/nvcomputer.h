@@ -100,6 +100,7 @@ public:
     int serverCodecModeSupport;
     QString gpuModel;
     bool isSupportedServerVersion;
+    bool userPassAuthEnabled = false;
 
     // Persisted traits
     NvAddress localAddress;

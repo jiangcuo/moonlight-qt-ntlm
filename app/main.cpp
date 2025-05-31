@@ -754,7 +754,22 @@ int main(int argc, char *argv[])
             streamParser.parse(app.arguments(), preferences);
             QString host    = streamParser.getHost();
             QString appName = streamParser.getAppName();
-            auto launcher   = new CliStartStream::Launcher(host, appName, preferences, &app);
+            
+            // 检查是否启用用户名密码认证
+            bool enableUserpass = streamParser.getEnableUserpass();
+            QString username = streamParser.getUsername();
+            QString password = streamParser.getPassword();
+
+            CliStartStream::Launcher* launcher;
+            if (enableUserpass && !username.isEmpty() && !password.isEmpty()) {
+                // 使用用户名密码认证的构造函数
+                launcher = new CliStartStream::Launcher(host, appName, preferences,
+                                                       enableUserpass, username, password, &app);
+            } else {
+                // 使用原有的构造函数
+                launcher = new CliStartStream::Launcher(host, appName, preferences, &app);
+            }
+            
             engine.rootContext()->setContextProperty("launcher", launcher);
             break;
         }
