@@ -192,6 +192,9 @@ public:
 
     QVector<NvApp>
     getAppList(bool ignoreSsl);
+    
+    QVector<NvApp>
+    getAppList(bool ignoreSsl, const QString& username, const QString& password);
 
     QImage
     getBoxArt(int appId);

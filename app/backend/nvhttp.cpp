@@ -359,33 +359,62 @@ NvHTTP::getAppList()
                                             NvLogLevel::NVLL_ERROR);
     verifyResponseStatus(appxml);
 
+    qInfo() << "[DEBUG] Starting XML parsing...";
     QXmlStreamReader xmlReader(appxml);
     QVector<NvApp> apps;
+    int appCount = 0;
+    
     while (!xmlReader.atEnd()) {
         while (xmlReader.readNextStartElement()) {
             auto name = xmlReader.name();
             if (name == QString("App")) {
                 // We must have a valid app before advancing to the next one
                 if (!apps.isEmpty() && !apps.last().isInitialized()) {
+                    qWarning() << "[DEBUG] Invalid applist XML - incomplete app entry";
                     qWarning() << "Invalid applist XML";
                     Q_ASSERT(false);
                     return QVector<NvApp>();
                 }
                 apps.append(NvApp());
+                appCount++;
+                qInfo() << "[DEBUG] Found new app entry #" << appCount;
             }
             else if (name == QString("AppTitle")) {
-                apps.last().name = xmlReader.readElementText();
+                QString appTitle = xmlReader.readElementText();
+                apps.last().name = appTitle;
+                qInfo() << "[DEBUG] App" << appCount << "title:" << appTitle;
             }
             else if (name == QString("ID")) {
-                apps.last().id = xmlReader.readElementText().toInt();
+                QString idText = xmlReader.readElementText();
+                int appId = idText.toInt();
+                apps.last().id = appId;
+                qInfo() << "[DEBUG] App" << appCount << "ID:" << appId;
             }
             else if (name == QString("IsHdrSupported")) {
-                apps.last().hdrSupported = xmlReader.readElementText() == "1";
+                QString hdrText = xmlReader.readElementText();
+                bool hdrSupported = hdrText == "1";
+                apps.last().hdrSupported = hdrSupported;
+                qInfo() << "[DEBUG] App" << appCount << "HDR supported:" << hdrSupported;
             }
             else if (name == QString("IsAppCollectorGame")) {
-                apps.last().isAppCollectorGame = xmlReader.readElementText() == "1";
+                QString collectorText = xmlReader.readElementText();
+                bool isCollector = collectorText == "1";
+                apps.last().isAppCollectorGame = isCollector;
+                qInfo() << "[DEBUG] App" << appCount << "is collector game:" << isCollector;
+            } else {
+                qInfo() << "[DEBUG] Skipping unknown XML element:" << name.toString();
             }
         }
+    }
+
+    if (xmlReader.hasError()) {
+        qWarning() << "[DEBUG] XML parsing error:" << xmlReader.errorString();
+        qWarning() << "[DEBUG] Error at line:" << xmlReader.lineNumber() << "column:" << xmlReader.columnNumber();
+    }
+
+    qInfo() << "[DEBUG] XML parsing completed. Total apps found:" << apps.size();
+    for (int i = 0; i < apps.size(); i++) {
+        qInfo() << "[DEBUG] App" << (i+1) << "summary: ID=" << apps[i].id << "Name=" << apps[i].name;
     }
 
     return apps;
@@ -395,24 +424,39 @@ NvHTTP::getAppList()
 QVector<NvApp>
 NvHTTP::getAppList(bool ignoreSsl)
 {
+    qInfo() << "[DEBUG] getAppList called with ignoreSsl:" << ignoreSsl;
+    qInfo() << "[DEBUG] Base HTTPS URL:" << m_BaseUrlHttps.toString();
+    
     QString appxml;
     
-    if (ignoreSsl) {
-        // 在用户名密码认证模式下，忽略SSL验证获取应用程序列表
-        appxml = openConnectionToStringIgnoreSsl(m_BaseUrlHttps,
-                                                 "applist",
-                                                 nullptr,
-                                                 REQUEST_TIMEOUT_MS,
-                                                 NvLogLevel::NVLL_ERROR);
-    } else {
-        appxml = openConnectionToString(m_BaseUrlHttps,
-                                       "applist",
-                                       nullptr,
-                                       REQUEST_TIMEOUT_MS,
-                                       NvLogLevel::NVLL_ERROR);
+    try {
+        if (ignoreSsl) {
+            qInfo() << "[DEBUG] Using SSL-ignored connection for applist";
+            // 在用户名密码认证模式下，忽略SSL验证获取应用程序列表
+            appxml = openConnectionToStringIgnoreSsl(m_BaseUrlHttps,
+                                                     "applist",
+                                                     nullptr,
+                                                     REQUEST_TIMEOUT_MS,
+                                                     NvLogLevel::NVLL_ERROR);
+        } else {
+            qInfo() << "[DEBUG] Using normal SSL connection for applist";
+            appxml = openConnectionToString(m_BaseUrlHttps,
+                                           "applist",
+                                           nullptr,
+                                           REQUEST_TIMEOUT_MS,
+                                           NvLogLevel::NVLL_ERROR);
+        }
+    } catch (const QtNetworkReplyException& e) {
+        qWarning() << "[DEBUG] Network exception caught in getAppList:";
+        qWarning() << "[DEBUG] Exception error:" << e.getError();
+        throw; // 重新抛出异常
     }
     
+    qInfo() << "[DEBUG] AppXML received, length:" << appxml.length();
+    qInfo() << "[DEBUG] AppXML content preview:" << appxml.left(300);
+    
     verifyResponseStatus(appxml);
+    qInfo() << "[DEBUG] Response status verified successfully";
 
     QXmlStreamReader xmlReader(appxml);
     QVector<NvApp> apps;
@@ -444,6 +488,113 @@ NvHTTP::getAppList(bool ignoreSsl)
     }
 
     qInfo() << "Found" << apps.count() << "apps using" << (ignoreSsl ? "HTTPS (SSL ignored)" : "HTTPS");
+    return apps;
+}
+
+// 新增：支持用户名密码认证的getAppList重载方法
+QVector<NvApp>
+NvHTTP::getAppList(bool ignoreSsl, const QString& username, const QString& password)
+{
+    qInfo() << "[DEBUG] getAppList called with ignoreSsl:" << ignoreSsl << "username:" << username;
+    qInfo() << "[DEBUG] Base HTTPS URL:" << m_BaseUrlHttps.toString();
+    
+    QString appxml;
+    QString arguments;
+    
+    // 构建认证参数
+    if (!username.isEmpty() && !password.isEmpty()) {
+        arguments = QString("enable_userpass=true&username=%1&password=%2")
+                   .arg(QString(QUrl::toPercentEncoding(username)))
+                   .arg(QString(QUrl::toPercentEncoding(password)));
+        qInfo() << "[DEBUG] Using user-pass authentication arguments";
+    }
+    
+    try {
+        if (ignoreSsl) {
+            qInfo() << "[DEBUG] Using SSL-ignored connection for applist with user-pass auth";
+            appxml = openConnectionToStringIgnoreSsl(m_BaseUrlHttps,
+                                                     "applist",
+                                                     arguments.isEmpty() ? nullptr : arguments,
+                                                     REQUEST_TIMEOUT_MS,
+                                                     NvLogLevel::NVLL_ERROR);
+        } else {
+            qInfo() << "[DEBUG] Using normal SSL connection for applist with user-pass auth";
+            appxml = openConnectionToString(m_BaseUrlHttps,
+                                           "applist",
+                                           arguments.isEmpty() ? nullptr : arguments,
+                                           REQUEST_TIMEOUT_MS,
+                                           NvLogLevel::NVLL_ERROR);
+        }
+    } catch (const QtNetworkReplyException& e) {
+        qWarning() << "[DEBUG] Network exception caught in getAppList (user-pass version):";
+        qWarning() << "[DEBUG] Exception error:" << e.getError();
+        throw; // 重新抛出异常
+    }
+    
+    qInfo() << "[DEBUG] AppXML received (user-pass), length:" << appxml.length();
+    qInfo() << "[DEBUG] AppXML content preview (user-pass):" << appxml.left(300);
+    
+    verifyResponseStatus(appxml);
+    qInfo() << "[DEBUG] Response status verified successfully (user-pass)";
+
+    qInfo() << "[DEBUG] Starting XML parsing (user-pass)...";
+    QXmlStreamReader xmlReader(appxml);
+    QVector<NvApp> apps;
+    int appCount = 0;
+    
+    while (!xmlReader.atEnd()) {
+        while (xmlReader.readNextStartElement()) {
+            auto name = xmlReader.name();
+            if (name == QString("App")) {
+                // We must have a valid app before advancing to the next one
+                if (!apps.isEmpty() && !apps.last().isInitialized()) {
+                    qWarning() << "[DEBUG] Invalid applist XML - incomplete app entry (user-pass)";
+                    qWarning() << "Invalid applist XML";
+                    Q_ASSERT(false);
+                    return QVector<NvApp>();
+                }
+                apps.append(NvApp());
+                appCount++;
+                qInfo() << "[DEBUG] Found new app entry (user-pass) #" << appCount;
+            }
+            else if (name == QString("AppTitle")) {
+                QString appTitle = xmlReader.readElementText();
+                apps.last().name = appTitle;
+                qInfo() << "[DEBUG] App (user-pass)" << appCount << "title:" << appTitle;
+            }
+            else if (name == QString("ID")) {
+                QString idText = xmlReader.readElementText();
+                int appId = idText.toInt();
+                apps.last().id = appId;
+                qInfo() << "[DEBUG] App (user-pass)" << appCount << "ID:" << appId;
+            }
+            else if (name == QString("IsHdrSupported")) {
+                QString hdrText = xmlReader.readElementText();
+                bool hdrSupported = hdrText == "1";
+                apps.last().hdrSupported = hdrSupported;
+                qInfo() << "[DEBUG] App (user-pass)" << appCount << "HDR supported:" << hdrSupported;
+            }
+            else if (name == QString("IsAppCollectorGame")) {
+                QString collectorText = xmlReader.readElementText();
+                bool isCollector = collectorText == "1";
+                apps.last().isAppCollectorGame = isCollector;
+                qInfo() << "[DEBUG] App (user-pass)" << appCount << "is collector game:" << isCollector;
+            } else {
+                qInfo() << "[DEBUG] Skipping unknown XML element (user-pass):" << name.toString();
+            }
+        }
+    }
+
+    if (xmlReader.hasError()) {
+        qWarning() << "[DEBUG] XML parsing error (user-pass):" << xmlReader.errorString();
+        qWarning() << "[DEBUG] Error at line:" << xmlReader.lineNumber() << "column:" << xmlReader.columnNumber();
+    }
+
+    qInfo() << "[DEBUG] XML parsing completed (user-pass). Total apps found:" << apps.size();
+    for (int i = 0; i < apps.size(); i++) {
+        qInfo() << "[DEBUG] App (user-pass)" << (i+1) << "summary: ID=" << apps[i].id << "Name=" << apps[i].name;
+    }
+
     return apps;
 }
 
@@ -590,6 +741,13 @@ NvHTTP::openConnectionToStringIgnoreSsl(QUrl baseUrl,
                                        int timeoutMs,
                                        NvLogLevel logLevel)
 {
+    // Debug: Function entry
+    qInfo() << "[DEBUG] openConnectionToStringIgnoreSsl called";
+    qInfo() << "[DEBUG] Command:" << command;
+    qInfo() << "[DEBUG] Base URL:" << baseUrl.toString();
+    qInfo() << "[DEBUG] Arguments:" << (arguments.isNull() ? "NULL" : arguments);
+    qInfo() << "[DEBUG] Timeout:" << timeoutMs << "ms";
+
     // Port must be set
     Q_ASSERT(baseUrl.port(0) != 0);
 
@@ -600,14 +758,23 @@ NvHTTP::openConnectionToStringIgnoreSsl(QUrl baseUrl,
     // Use a common UID for Moonlight clients to allow them to quit
     // games for each other (otherwise GFE gets screwed up and it requires
     // manual intervention to solve).
-    url.setQuery("uniqueid=0123456789ABCDEF&uuid=" +
+    QString queryString = "uniqueid=0123456789ABCDEF&uuid=" +
                  QUuid::createUuid().toRfc4122().toHex() +
-                 ((arguments != nullptr) ? ("&" + arguments) : ""));
+                 ((arguments != nullptr) ? ("&" + arguments) : "");
+    url.setQuery(queryString);
+
+    // Debug: Final URL
+    qInfo() << "[DEBUG] Final request URL:" << url.toString();
 
     QNetworkRequest request(url);
 
     // Add our client certificate
-    request.setSslConfiguration(IdentityManager::get()->getSslConfig());
+    auto sslConfig = IdentityManager::get()->getSslConfig();
+    request.setSslConfiguration(sslConfig);
+    
+    // Debug: SSL configuration
+    qInfo() << "[DEBUG] SSL certificate loaded, protocol:" << sslConfig.protocol();
+    qInfo() << "[DEBUG] SSL peer verify mode:" << sslConfig.peerVerifyMode();
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
     // Disable HTTP/2 (GFE 3.22 doesn't like it) and Qt 6 enables it by default
@@ -622,12 +789,19 @@ NvHTTP::openConnectionToStringIgnoreSsl(QUrl baseUrl,
     QT_WARNING_POP
 #endif
 
+    // Debug: Starting network request
+    qInfo() << "[DEBUG] Creating network request...";
     QNetworkReply* reply = m_Nam.get(request);
+    qInfo() << "[DEBUG] Network request created, waiting for response...";
 
     // 忽略所有SSL错误（仅用于用户名密码认证模式下的应用程序列表获取）
     connect(reply, QOverload<const QList<QSslError>&>::of(&QNetworkReply::sslErrors),
-            [reply](const QList<QSslError>&) {
-                qInfo() << "Ignoring SSL errors for applist request (user-pass auth mode)";
+            [reply](const QList<QSslError>& errors) {
+                qInfo() << "[DEBUG] SSL errors detected, count:" << errors.size();
+                for (const QSslError& error : errors) {
+                    qInfo() << "[DEBUG] SSL Error:" << error.errorString();
+                }
+                qInfo() << "[DEBUG] Ignoring SSL errors for applist request (user-pass auth mode)";
                 reply->ignoreSslErrors();
             });
 
@@ -637,38 +811,58 @@ NvHTTP::openConnectionToStringIgnoreSsl(QUrl baseUrl,
     connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, &loop, &QEventLoop::quit);
     if (timeoutMs) {
         QTimer::singleShot(timeoutMs, &loop, &QEventLoop::quit);
+        qInfo() << "[DEBUG] Timeout set to:" << timeoutMs << "ms";
     }
     if (logLevel >= NvLogLevel::NVLL_VERBOSE) {
         qInfo() << "Executing request (SSL ignored):" << url.toString();
     }
+    
+    qInfo() << "[DEBUG] Starting event loop, waiting for network response...";
     loop.exec(QEventLoop::ExcludeUserInputEvents);
+    qInfo() << "[DEBUG] Event loop finished";
 
     // Abort the request if it timed out
     if (!reply->isFinished())
     {
+        qWarning() << "[DEBUG] Request timed out! Aborting...";
         if (logLevel >= NvLogLevel::NVLL_ERROR) {
             qWarning() << "Aborting timed out request for" << url.toString();
         }
         reply->abort();
+    } else {
+        qInfo() << "[DEBUG] Request completed successfully";
     }
 
     // We must clear out cached authentication and connections or
     // GFE will puke next time
     m_Nam.clearAccessCache();
+    qInfo() << "[DEBUG] Network access cache cleared";
+
+    // Debug: Check response status
+    qInfo() << "[DEBUG] HTTP status code:" << reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    qInfo() << "[DEBUG] Network error code:" << reply->error();
+    qInfo() << "[DEBUG] Error string:" << reply->errorString();
 
     // Handle error
     if (reply->error() != QNetworkReply::NoError)
     {
+        qWarning() << "[DEBUG] Network request failed!";
+        qWarning() << "[DEBUG] Error code:" << reply->error();
+        qWarning() << "[DEBUG] Error description:" << reply->errorString();
+        qWarning() << "[DEBUG] HTTP status:" << reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+        
         if (logLevel >= NvLogLevel::NVLL_ERROR) {
             qWarning() << command << "request failed with error:" << reply->error();
         }
 
         if (reply->error() == QNetworkReply::OperationCanceledError) {
+            qWarning() << "[DEBUG] Operation was canceled (timeout)";
             QtNetworkReplyException exception(QNetworkReply::TimeoutError, "Request timed out");
             delete reply;
             throw exception;
         }
         else {
+            qWarning() << "[DEBUG] Other network error occurred";
             QtNetworkReplyException exception(reply->error(), reply->errorString());
             delete reply;
             throw exception;
@@ -676,6 +870,7 @@ NvHTTP::openConnectionToStringIgnoreSsl(QUrl baseUrl,
     }
 
     // 读取响应
+    qInfo() << "[DEBUG] Reading response data...";
     QString ret;
     QTextStream stream(reply);
 
@@ -686,7 +881,22 @@ NvHTTP::openConnectionToStringIgnoreSsl(QUrl baseUrl,
 #endif
 
     ret = stream.readAll();
+    qInfo() << "[DEBUG] Response data length:" << ret.length() << "characters";
+    qInfo() << "[DEBUG] Response content preview (first 200 chars):" << ret.left(200);
+    
+    if (ret.isEmpty()) {
+        qWarning() << "[DEBUG] WARNING: Response is empty!";
+    } else if (ret.contains("status_code")) {
+        qInfo() << "[DEBUG] Response contains status_code field";
+        if (ret.contains("status_code=\"200\"") || ret.contains("status_code\": 200")) {
+            qInfo() << "[DEBUG] Status code indicates success (200)";
+        } else {
+            qWarning() << "[DEBUG] Status code might indicate failure (not 200)";
+        }
+    }
+    
     delete reply;
+    qInfo() << "[DEBUG] openConnectionToStringIgnoreSsl completed successfully";
 
     return ret;
 }

@@ -64,7 +64,13 @@ private:
             // 这是安全的，因为应用程序列表不包含敏感信息
             if (m_Computer->userPassAuthEnabled) {
                 qInfo() << "User-pass auth mode: using HTTPS with SSL verification ignored for app list";
-                appList = http.getAppList(true); // ignoreSsl = true
+                if (!m_Computer->username.isEmpty() && !m_Computer->password.isEmpty()) {
+                    qInfo() << "Using stored credentials for app list request";
+                    appList = http.getAppList(true, m_Computer->username, m_Computer->password); // ignoreSsl = true, with credentials
+                } else {
+                    qWarning() << "User-pass auth enabled but no credentials stored";
+                    appList = http.getAppList(true); // ignoreSsl = true, fallback without credentials
+                }
             } else {
                 appList = http.getAppList(); // 正常模式使用完整SSL验证
             }
