@@ -1,0 +1,22 @@
+#!/usr/bin/make -f
+
+include /usr/share/dpkg/pkg-info.mk
+export qmake = qmake6
+
+%:
+	dh $@
+
+override_dh_auto_build:
+	qmake6 moonlight-qt.pro
+	$(MAKE) release -j$(shell nproc)
+
+override_dh_clean:
+	echo "clean"
+
+override_dh_auto_configure:
+	echo "configure"
+
+override_dh_auto_install:
+	install -Dm755 app/moonlight $(CURDIR)/debian/moonlight-qt/usr/bin/moonlight
+	install -Dm644 debian/moonlight-qt.desktop $(CURDIR)/debian/moonlight-qt/usr/share/applications/moonlight-qt.desktop
+	install -Dm644 app/moonlight.ico $(CURDIR)/debian/moonlight-qt/usr/share/applications/moonlight-qt.ico

@@ -1,0 +1,8 @@
+[Desktop Entry]
+Version=6.1.0
+Categories=network
+Comment=GameStream client for PCs
+Exec=/usr/bin/moonlight
+Icon=/usr/share/applications/moonlight-qt/moonlight-qt.ico
+Terminal=false
+Type=Application

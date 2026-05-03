@@ -59,7 +59,20 @@ private:
         QVector<NvApp> appList;
 
         try {
-            appList = http.getAppList();
+            // 在用户名密码认证模式下，忽略SSL验证获取应用程序列表
+            if (m_Computer->userPassAuthEnabled) {
+                qInfo() << "User-pass auth mode: using HTTPS with SSL verification ignored for app list";
+                if (!m_Computer->username.isEmpty() && !m_Computer->password.isEmpty()) {
+                    qInfo() << "Using stored credentials for app list request";
+                    appList = http.getAppList(true, m_Computer->username, m_Computer->password);
+                } else {
+                    qWarning() << "User-pass auth enabled but no credentials stored";
+                    appList = http.getAppList(true);
+                }
+            } else {
+                appList = http.getAppList();
+            }
+            
             if (appList.isEmpty()) {
                 return false;
             }
@@ -123,7 +136,7 @@ private:
             // Grab the applist if it's empty or it's been long enough that we need to refresh
             pollsSinceLastAppListFetch++;
             if (m_Computer->state == NvComputer::CS_ONLINE &&
-                    m_Computer->pairState == NvComputer::PS_PAIRED &&
+                    (m_Computer->pairState == NvComputer::PS_PAIRED || m_Computer->userPassAuthEnabled) &&
                     (m_Computer->appList.isEmpty() || pollsSinceLastAppListFetch >= POLLS_PER_APPLIST_FETCH)) {
                 // Notify prior to the app list poll since it may take a while, and we don't
                 // want to delay onlining of a machine, especially if we already have a cached list.

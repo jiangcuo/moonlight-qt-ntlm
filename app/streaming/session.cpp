@@ -1595,7 +1595,10 @@ bool Session::startConnectionAsync()
                       m_Preferences->playAudioOnHost,
                       m_InputHandler->getAttachedGamepadMask(),
                       !m_Preferences->multiController,
-                      rtspSessionUrl);
+                      rtspSessionUrl,
+                      m_EnableUserpass,
+                      m_Username,
+                      m_Password);
     } catch (const GfeHttpResponseException& e) {
         emit displayLaunchError(tr("Host returned error: %1").arg(e.toQString()));
         return false;
@@ -1721,6 +1724,14 @@ void Session::setShouldExit(bool quitHostApp)
     }
 
     m_ShouldExit = true;
+}
+
+// 新增：setUserCredentials方法实现
+void Session::setUserCredentials(const QString& username, const QString& password)
+{
+    m_EnableUserpass = true;
+    m_Username = username;
+    m_Password = password;
 }
 
 void Session::start()

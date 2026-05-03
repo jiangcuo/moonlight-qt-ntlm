@@ -138,8 +138,8 @@ public:
     openConnectionToString(QUrl baseUrl,
                            QString command,
                            QString arguments,
-                           int timeoutMs,
-                           NvLogLevel logLevel = NvLogLevel::NVLL_VERBOSE);
+                           int timeoutMs = 0,
+                           NvLogLevel logLevel = NVLL_VERBOSE);
 
     void setServerCert(QSslCertificate serverCert);
 
@@ -172,8 +172,29 @@ public:
              bool persistGameControllersOnDisconnect,
              QString& rtspSessionUrl);
 
+    // 新增：支持用户名密码认证的startApp重载方法
+    void
+    startApp(QString verb,
+             bool isGfe,
+             int appId,
+             PSTREAM_CONFIGURATION streamConfig,
+             bool sops,
+             bool localAudio,
+             int gamepadMask,
+             bool persistGameControllersOnDisconnect,
+             QString& rtspSessionUrl,
+             bool enableUserpass,
+             QString username = QString(),
+             QString password = QString());
+
     QVector<NvApp>
     getAppList();
+
+    QVector<NvApp>
+    getAppList(bool ignoreSsl);
+    
+    QVector<NvApp>
+    getAppList(bool ignoreSsl, const QString& username, const QString& password);
 
     QImage
     getBoxArt(int appId);
@@ -188,12 +209,17 @@ private:
     void
     handleSslErrors(QNetworkReply* reply, const QList<QSslError>& errors);
 
-    QNetworkReply*
-    openConnection(QUrl baseUrl,
-                   QString command,
-                   QString arguments,
-                   int timeoutMs,
-                   NvLogLevel logLevel);
+    QString openConnectionToStringIgnoreSsl(QUrl baseUrl,
+                                             QString command,
+                                             QString arguments,
+                                             int timeoutMs = 0,
+                                             NvLogLevel logLevel = NVLL_ERROR);
+
+    QNetworkReply* openConnection(QUrl baseUrl,
+                                QString command,
+                                QString arguments,
+                                int timeoutMs = 0,
+                                NvLogLevel logLevel = NVLL_ERROR);
 
     NvAddress m_Address;
     QNetworkAccessManager* m_Nam;

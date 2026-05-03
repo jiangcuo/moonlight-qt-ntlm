@@ -341,6 +341,11 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
     parser.addPositionalArgument("host", "Host computer name, UUID, or IP address", "<host>");
     parser.addPositionalArgument("app", "App to stream", "\"<app>\"");
 
+    // 新增：用户名密码认证参数
+    parser.addFlagOption("enable-userpass", "Enable username/password authentication instead of pairing");
+    parser.addValueOption("username", "Username for authentication");
+    parser.addValueOption("password", "Password for authentication");
+
     parser.addFlagOption("720",  "1280x720 resolution");
     parser.addFlagOption("1080", "1920x1080 resolution");
     parser.addFlagOption("1440", "2560x1440 resolution");
@@ -377,6 +382,16 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
     }
 
     parser.handleUnknownOptions();
+
+    // 新增：检查用户名密码认证参数
+    m_EnableUserpass = parser.isSet("enable-userpass");
+    if (m_EnableUserpass) {
+        if (!parser.isSet("username") || !parser.isSet("password")) {
+            parser.showError("Username and password are required when enable-userpass is set");
+        }
+        m_Username = parser.value("username");
+        m_Password = parser.value("password");
+    }
 
     // Resolve display's width and height
     static QRegularExpression resolutionRexExp("^(720|1080|1440|4K|resolution)$");
@@ -590,4 +605,20 @@ bool ListCommandLineParser::isPrintCSV() const
 bool ListCommandLineParser::isVerbose() const
 {
     return m_Verbose;
+}
+
+// 新增：StreamCommandLineParser的用户名密码认证方法实现
+bool StreamCommandLineParser::getEnableUserpass() const
+{
+    return m_EnableUserpass;
+}
+
+QString StreamCommandLineParser::getUsername() const
+{
+    return m_Username;
+}
+
+QString StreamCommandLineParser::getPassword() const
+{
+    return m_Password;
 }

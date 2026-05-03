@@ -23,6 +23,15 @@ public:
     explicit Launcher(QString computer, QString app,
                       StreamingPreferences* preferences,
                       QObject *parent = nullptr);
+    
+    // 新增：支持用户名密码认证的构造函数
+    explicit Launcher(QString computer, QString app,
+                      StreamingPreferences* preferences,
+                      bool enableUserpass,
+                      QString username,
+                      QString password,
+                      QObject *parent = nullptr);
+    
     ~Launcher();
     Q_INVOKABLE void execute(ComputerManager *manager);
     Q_INVOKABLE void quitRunningApp();

@@ -234,6 +234,70 @@ NvHTTP::startApp(QString verb,
     rtspSessionUrl = getXmlString(response, "sessionUrl0");
 }
 
+// 新增：支持用户名密码认证的startApp重载方法实现
+void
+NvHTTP::startApp(QString verb,
+                 bool isGfe,
+                 int appId,
+                 PSTREAM_CONFIGURATION streamConfig,
+                 bool sops,
+                 bool localAudio,
+                 int gamepadMask,
+                 bool persistGameControllersOnDisconnect,
+                 QString& rtspSessionUrl,
+                 bool enableUserpass,
+                 QString username,
+                 QString password)
+{
+    int riKeyId;
+
+    memcpy(&riKeyId, streamConfig->remoteInputAesIv, sizeof(riKeyId));
+    riKeyId = qFromBigEndian(riKeyId);
+
+    QString arguments = "appid="+QString::number(appId)+
+                       "&mode="+QString::number(streamConfig->width)+"x"+
+                       QString::number(streamConfig->height)+"x"+
+                       QString::number((streamConfig->fps > 60 && isGfe) ? 0 : streamConfig->fps)+
+                       "&additionalStates=1&sops="+QString::number(sops ? 1 : 0)+
+                       "&rikey="+QByteArray(streamConfig->remoteInputAesKey, sizeof(streamConfig->remoteInputAesKey)).toHex()+
+                       "&rikeyid="+QString::number(riKeyId)+
+                       ((streamConfig->supportedVideoFormats & VIDEO_FORMAT_MASK_10BIT) ?
+                           "&hdrMode=1&clientHdrCapVersion=0&clientHdrCapSupportedFlagsInUint32=0&clientHdrCapMetaDataId=NV_STATIC_METADATA_TYPE_1&clientHdrCapDisplayData=0x0x0x0x0x0x0x0x0x0x0" :
+                            "")+
+                       "&localAudioPlayMode="+QString::number(localAudio ? 1 : 0)+
+                       "&surroundAudioInfo="+QString::number(SURROUNDAUDIOINFO_FROM_AUDIO_CONFIGURATION(streamConfig->audioConfiguration))+
+                       "&remoteControllersBitmap="+QString::number(gamepadMask)+
+                       "&gcmap="+QString::number(gamepadMask)+
+                       "&gcpersist="+QString::number(persistGameControllersOnDisconnect ? 1 : 0)+
+                       LiGetLaunchUrlQueryParameters();
+
+    // 如果启用用户名密码认证，添加相关参数
+    if (enableUserpass) {
+        arguments += "&enable_userpass=true&username=" + username + "&password=" + password;
+    }
+
+    QString response;
+    if (enableUserpass) {
+        // 在用户名密码认证模式下，忽略SSL验证进行启动请求
+        response = openConnectionToStringIgnoreSsl(m_BaseUrlHttps,
+                                                  verb,
+                                                  arguments,
+                                                  LAUNCH_TIMEOUT_MS);
+    } else {
+        response = openConnectionToString(m_BaseUrlHttps,
+                                        verb,
+                                        arguments,
+                                        LAUNCH_TIMEOUT_MS);
+    }
+
+    qInfo() << "Launch response:" << response;
+
+    // Throws if the request failed
+    verifyResponseStatus(response);
+
+    rtspSessionUrl = getXmlString(response, "sessionUrl0");
+}
+
 void
 NvHTTP::quitApp()
 {
@@ -322,6 +386,136 @@ NvHTTP::getAppList()
         }
     }
 
+    return apps;
+}
+
+// 新增：支持忽略SSL验证的getAppList重载方法
+QVector<NvApp>
+NvHTTP::getAppList(bool ignoreSsl)
+{
+    qInfo() << "[DEBUG] getAppList called with ignoreSsl:" << ignoreSsl;
+    
+    QString appxml;
+    
+    try {
+        if (ignoreSsl) {
+            appxml = openConnectionToStringIgnoreSsl(m_BaseUrlHttps,
+                                                     "applist",
+                                                     nullptr,
+                                                     REQUEST_TIMEOUT_MS,
+                                                     NvLogLevel::NVLL_ERROR);
+        } else {
+            appxml = openConnectionToString(m_BaseUrlHttps,
+                                           "applist",
+                                           nullptr,
+                                           REQUEST_TIMEOUT_MS,
+                                           NvLogLevel::NVLL_ERROR);
+        }
+    } catch (const QtNetworkReplyException& e) {
+        qWarning() << "[DEBUG] Network exception caught in getAppList:" << e.getError();
+        throw;
+    }
+    
+    verifyResponseStatus(appxml);
+
+    QXmlStreamReader xmlReader(appxml);
+    QVector<NvApp> apps;
+    while (!xmlReader.atEnd()) {
+        while (xmlReader.readNextStartElement()) {
+            auto name = xmlReader.name();
+            if (name == QString("App")) {
+                if (!apps.isEmpty() && !apps.last().isInitialized()) {
+                    qWarning() << "Invalid applist XML";
+                    Q_ASSERT(false);
+                    return QVector<NvApp>();
+                }
+                apps.append(NvApp());
+            }
+            else if (name == QString("AppTitle")) {
+                apps.last().name = xmlReader.readElementText();
+            }
+            else if (name == QString("ID")) {
+                apps.last().id = xmlReader.readElementText().toInt();
+            }
+            else if (name == QString("IsHdrSupported")) {
+                apps.last().hdrSupported = xmlReader.readElementText() == "1";
+            }
+            else if (name == QString("IsAppCollectorGame")) {
+                apps.last().isAppCollectorGame = xmlReader.readElementText() == "1";
+            }
+        }
+    }
+
+    qInfo() << "Found" << apps.count() << "apps using" << (ignoreSsl ? "HTTPS (SSL ignored)" : "HTTPS");
+    return apps;
+}
+
+// 新增：支持用户名密码认证的getAppList重载方法
+QVector<NvApp>
+NvHTTP::getAppList(bool ignoreSsl, const QString& username, const QString& password)
+{
+    qInfo() << "[DEBUG] getAppList called with ignoreSsl:" << ignoreSsl << "username:" << username;
+    
+    QString appxml;
+    QString arguments;
+    
+    // 构建认证参数
+    if (!username.isEmpty() && !password.isEmpty()) {
+        arguments = QString("enable_userpass=true&username=%1&password=%2")
+                   .arg(QString(QUrl::toPercentEncoding(username)))
+                   .arg(QString(QUrl::toPercentEncoding(password)));
+    }
+    
+    try {
+        if (ignoreSsl) {
+            appxml = openConnectionToStringIgnoreSsl(m_BaseUrlHttps,
+                                                     "applist",
+                                                     arguments.isEmpty() ? nullptr : arguments,
+                                                     REQUEST_TIMEOUT_MS,
+                                                     NvLogLevel::NVLL_ERROR);
+        } else {
+            appxml = openConnectionToString(m_BaseUrlHttps,
+                                           "applist",
+                                           arguments.isEmpty() ? nullptr : arguments,
+                                           REQUEST_TIMEOUT_MS,
+                                           NvLogLevel::NVLL_ERROR);
+        }
+    } catch (const QtNetworkReplyException& e) {
+        qWarning() << "[DEBUG] Network exception caught in getAppList (user-pass):" << e.getError();
+        throw;
+    }
+    
+    verifyResponseStatus(appxml);
+
+    QXmlStreamReader xmlReader(appxml);
+    QVector<NvApp> apps;
+    while (!xmlReader.atEnd()) {
+        while (xmlReader.readNextStartElement()) {
+            auto name = xmlReader.name();
+            if (name == QString("App")) {
+                if (!apps.isEmpty() && !apps.last().isInitialized()) {
+                    qWarning() << "Invalid applist XML";
+                    Q_ASSERT(false);
+                    return QVector<NvApp>();
+                }
+                apps.append(NvApp());
+            }
+            else if (name == QString("AppTitle")) {
+                apps.last().name = xmlReader.readElementText();
+            }
+            else if (name == QString("ID")) {
+                apps.last().id = xmlReader.readElementText().toInt();
+            }
+            else if (name == QString("IsHdrSupported")) {
+                apps.last().hdrSupported = xmlReader.readElementText() == "1";
+            }
+            else if (name == QString("IsAppCollectorGame")) {
+                apps.last().isAppCollectorGame = xmlReader.readElementText() == "1";
+            }
+        }
+    }
+
+    qInfo() << "Found" << apps.count() << "apps (user-pass mode)";
     return apps;
 }
 
@@ -446,6 +640,111 @@ NvHTTP::openConnectionToString(QUrl baseUrl,
     QNetworkReply* reply = openConnection(baseUrl, command, arguments, timeoutMs, logLevel);
     QString ret;
 
+    QTextStream stream(reply);
+
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    stream.setEncoding(QStringConverter::Utf8);
+#else
+    stream.setCodec("UTF-8");
+#endif
+
+    ret = stream.readAll();
+    delete reply;
+
+    return ret;
+}
+
+// 新增：忽略SSL验证的连接方法
+QString
+NvHTTP::openConnectionToStringIgnoreSsl(QUrl baseUrl,
+                                       QString command,
+                                       QString arguments,
+                                       int timeoutMs,
+                                       NvLogLevel logLevel)
+{
+    qInfo() << "[DEBUG] openConnectionToStringIgnoreSsl called";
+    qInfo() << "[DEBUG] Command:" << command;
+    qInfo() << "[DEBUG] Base URL:" << baseUrl.toString();
+
+    // Port must be set
+    Q_ASSERT(baseUrl.port(0) != 0);
+
+    // Build a URL for the request
+    QUrl url(baseUrl);
+    url.setPath("/" + command);
+
+    url.setQuery("uniqueid=0123456789ABCDEF&uuid=" +
+                 QUuid::createUuid().toRfc4122().toHex() +
+                 ((arguments != nullptr) ? ("&" + arguments) : ""));
+
+    QNetworkRequest request(url);
+
+    // Add our client certificate
+    request.setSslConfiguration(IdentityManager::get()->getSslConfig());
+
+#if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)
+    // Disable HTTP/2 (GFE 3.22 doesn't like it) and Qt 6 enables it by default
+    request.setAttribute(QNetworkRequest::Http2AllowedAttribute, false);
+#endif
+
+#if QT_VERSION >= QT_VERSION_CHECK(6, 3, 0)
+    request.setAttribute(QNetworkRequest::ConnectionCacheExpiryTimeoutSecondsAttribute, 0);
+#endif
+
+    QNetworkReply* reply = m_Nam->get(request);
+
+    // 忽略所有SSL错误（仅用于用户名密码认证模式下）
+    connect(reply, QOverload<const QList<QSslError>&>::of(&QNetworkReply::sslErrors),
+            [reply](const QList<QSslError>& errors) {
+                qInfo() << "[DEBUG] Ignoring" << errors.size() << "SSL errors for user-pass auth mode";
+                reply->ignoreSslErrors();
+            });
+
+    // Run the request with a timeout if requested
+    QEventLoop loop;
+    connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    connect(QCoreApplication::instance(), &QCoreApplication::aboutToQuit, &loop, &QEventLoop::quit);
+    if (timeoutMs) {
+        QTimer::singleShot(timeoutMs, &loop, &QEventLoop::quit);
+    }
+    if (logLevel >= NvLogLevel::NVLL_VERBOSE) {
+        qInfo() << "Executing request (SSL ignored):" << url.toString();
+    }
+    loop.exec(QEventLoop::ExcludeUserInputEvents);
+
+    // Abort the request if it timed out
+    if (!reply->isFinished())
+    {
+        if (logLevel >= NvLogLevel::NVLL_ERROR) {
+            qWarning() << "Aborting timed out request for" << url.toString();
+        }
+        reply->abort();
+    }
+
+#if QT_VERSION < QT_VERSION_CHECK(6, 3, 0)
+    m_Nam->clearAccessCache();
+#endif
+
+    // Handle error
+    if (reply->error() != QNetworkReply::NoError)
+    {
+        if (logLevel >= NvLogLevel::NVLL_ERROR) {
+            qWarning() << command << "request failed with error:" << reply->error();
+        }
+
+        if (reply->error() == QNetworkReply::OperationCanceledError) {
+            QtNetworkReplyException exception(QNetworkReply::TimeoutError, "Request timed out");
+            delete reply;
+            throw exception;
+        }
+        else {
+            QtNetworkReplyException exception(reply->error(), reply->errorString());
+            delete reply;
+            throw exception;
+        }
+    }
+
+    QString ret;
     QTextStream stream(reply);
 
 #if QT_VERSION >= QT_VERSION_CHECK(6, 0, 0)

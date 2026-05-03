@@ -125,6 +125,9 @@ public:
 
     void setShouldExit(bool quitHostApp = false);
 
+    // 新增：设置用户名密码认证
+    void setUserCredentials(const QString& username, const QString& password);
+
 signals:
     void stageStarting(QString stage);
 
@@ -280,6 +283,11 @@ private:
     Uint32 m_DropAudioEndTime;
 
     Overlay::OverlayManager m_OverlayManager;
+
+    // 新增：用户名密码认证相关成员变量
+    bool m_EnableUserpass = false;
+    QString m_Username;
+    QString m_Password;
 
     static CONNECTION_LISTENER_CALLBACKS k_ConnCallbacks;
     static Session* s_ActiveSession;
