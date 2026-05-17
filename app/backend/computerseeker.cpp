@@ -1,5 +1,6 @@
 #include "computerseeker.h"
 #include "computermanager.h"
+#include "nvhttp.h"
 #include <QTimer>
 
 ComputerSeeker::ComputerSeeker(ComputerManager *manager, QString computerName, QObject *parent)
@@ -47,16 +48,25 @@ bool ComputerSeeker::matchComputer(NvComputer *computer) const
 {
     QString value = m_ComputerName.toLower();
 
+    qInfo() << "matchComputer: looking for" << value
+            << "name=" << computer->name.toLower()
+            << "uuid=" << computer->uuid.toLower()
+            << "state=" << computer->state;
+
     if (computer->name.toLower() == value || computer->uuid.toLower() == value) {
+        qInfo() << "matchComputer: matched by name/uuid";
         return true;
     }
 
     for (const NvAddress& addr : computer->uniqueAddresses()) {
+        qInfo() << "matchComputer: checking addr" << addr.address() << addr.toString();
         if (addr.address().toLower() == value || addr.toString().toLower() == value) {
+            qInfo() << "matchComputer: matched by address";
             return true;
         }
     }
 
+    qInfo() << "matchComputer: no match found";
     return false;
 }
 

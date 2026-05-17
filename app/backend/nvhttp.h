@@ -203,6 +203,10 @@ public:
     QVector<NvDisplayMode>
     getDisplayModeList(QString serverInfo);
 
+    void setGatewayMode(const QString& gatewayHost, const QString& token);
+    static void setGlobalGateway(const QString& gatewayHost, const QString& token);
+    static void clearGlobalGateway();
+
     QUrl m_BaseUrlHttp;
     QUrl m_BaseUrlHttps;
 private:
@@ -221,7 +225,18 @@ private:
                                 int timeoutMs = 0,
                                 NvLogLevel logLevel = NVLL_ERROR);
 
+    QUrl buildGatewayProxyUrl(QUrl originalUrl);
+
     NvAddress m_Address;
     QNetworkAccessManager m_Nam;
     QSslCertificate m_ServerCert;
+
+    QString m_GatewayHost;
+    int m_GatewayPort = 9443;
+    QString m_GatewayToken;
+
+public:
+    static QString s_GlobalGatewayHost;
+    static int s_GlobalGatewayPort;
+    static QString s_GlobalGatewayToken;
 };

@@ -126,8 +126,8 @@ public:
 
     void setShouldExitAfterQuit();
 
-    // 新增：设置用户名密码认证
     void setUserCredentials(const QString& username, const QString& password);
+    void setGateway(const QString& gateway, const QString& gatewayUser, const QString& gatewayPassword);
 
 signals:
     void stageStarting(QString stage);
@@ -148,6 +148,7 @@ signals:
     void readyForDeletion();
 
 private:
+    bool connectToGateway();
     void execInternal();
 
     bool initialize();
@@ -288,10 +289,14 @@ private:
 
     Overlay::OverlayManager m_OverlayManager;
 
-    // 新增：用户名密码认证相关成员变量
     bool m_EnableUserpass = false;
     QString m_Username;
     QString m_Password;
+
+    QString m_Gateway;
+    QString m_GatewayUser;
+    QString m_GatewayPassword;
+    QString m_GatewayToken;
 
     static CONNECTION_LISTENER_CALLBACKS k_ConnCallbacks;
     static Session* s_ActiveSession;

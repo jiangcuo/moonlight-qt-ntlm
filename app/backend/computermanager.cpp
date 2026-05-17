@@ -384,11 +384,14 @@ void ComputerManager::startPolling()
         qWarning() << "mDNS is disabled by user preference";
     }
 
-    // Start polling threads for each known host
-    QMapIterator<QString, NvComputer*> i(m_KnownHosts);
-    while (i.hasNext()) {
-        i.next();
-        startPollingComputer(i.value());
+    if (!NvHTTP::s_GlobalGatewayHost.isEmpty()) {
+        qInfo() << "Gateway mode: skipping polling of known hosts";
+    } else {
+        QMapIterator<QString, NvComputer*> i(m_KnownHosts);
+        while (i.hasNext()) {
+            i.next();
+            startPollingComputer(i.value());
+        }
     }
 }
 
@@ -917,7 +920,11 @@ private:
                 bool changed = existingComputer->update(*newComputer);
                 delete newComputer;
 
-                // Drop the lock before notifying
+                if (!NvHTTP::s_GlobalGatewayHost.isEmpty()) {
+                    existingComputer->userPassAuthEnabled = true;
+                    changed = true;
+                }
+
                 m_ComputerManager->m_Lock.unlock();
 
                 // For non-mDNS clients, let them know it succeeded
@@ -935,7 +942,10 @@ private:
                 // Store this in our active sets
                 m_ComputerManager->m_KnownHosts[newComputer->uuid] = newComputer;
 
-                // Start polling if enabled (write lock required)
+                if (!NvHTTP::s_GlobalGatewayHost.isEmpty()) {
+                    newComputer->userPassAuthEnabled = true;
+                }
+
                 m_ComputerManager->startPollingComputer(newComputer);
 
                 // Drop the lock before notifying

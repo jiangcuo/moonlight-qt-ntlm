@@ -64,19 +64,25 @@ public:
     QString getHost() const;
     QString getAppName() const;
     
-    // 新增：用户名密码认证相关方法
     bool getEnableUserpass() const;
     QString getUsername() const;
     QString getPassword() const;
+
+    QString getGateway() const;
+    QString getGatewayUser() const;
+    QString getGatewayPassword() const;
 
 private:
     QString m_Host;
     QString m_AppName;
     
-    // 新增：用户名密码认证相关成员变量
     bool m_EnableUserpass = false;
     QString m_Username;
     QString m_Password;
+
+    QString m_Gateway;
+    QString m_GatewayUser;
+    QString m_GatewayPassword;
     
     QMap<QString, StreamingPreferences::WindowMode> m_WindowModeMap;
     QMap<QString, StreamingPreferences::AudioConfig> m_AudioConfigMap;

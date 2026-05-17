@@ -1,10 +1,18 @@
 #include "startstream.h"
 #include "backend/computermanager.h"
 #include "backend/computerseeker.h"
+#include "backend/nvhttp.h"
 #include "streaming/session.h"
 
 #include <QCoreApplication>
 #include <QTimer>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkProxy>
+#include <QEventLoop>
+#include <QSslConfiguration>
 
 #define COMPUTER_SEEK_TIMEOUT 30000
 #define APP_SEEK_TIMEOUT 10000
@@ -61,6 +69,14 @@ public:
                 m_State = StateSeekComputer;
                 m_ComputerManager = event.computerManager;
 
+                if (!m_Gateway.isEmpty()) {
+                    if (!doGatewayConnect()) {
+                        m_State = StateFailure;
+                        emit q->failed(QObject::tr("Failed to connect to gateway: %1").arg(m_Gateway));
+                        break;
+                    }
+                }
+
                 m_ComputerSeeker = new ComputerSeeker(m_ComputerManager, m_ComputerName, q);
                 q->connect(m_ComputerSeeker, &ComputerSeeker::computerFound,
                            q, &Launcher::onComputerFound);
@@ -83,11 +99,11 @@ public:
                     m_State = StateSeekApp;
                     m_Computer = event.computer;
                     
-                    // 设置用户名密码认证标志
                     if (m_EnableUserpass) {
                         m_Computer->userPassAuthEnabled = true;
                     }
                     
+                    m_ComputerManager->startPolling();
                     m_TimeoutTimer->start(APP_SEEK_TIMEOUT);
                     emit q->searchingApp();
                 } else {
@@ -112,6 +128,9 @@ public:
                         
                         if (m_EnableUserpass) {
                             session->setUserCredentials(m_Username, m_Password);
+                        }
+                        if (!m_Gateway.isEmpty()) {
+                            session->setGateway(m_Gateway, m_GatewayUser, m_GatewayPassword);
                         }
                         
                         emit q->sessionCreated(app.name, session);
@@ -194,6 +213,68 @@ public:
     bool m_EnableUserpass = false;
     QString m_Username;
     QString m_Password;
+
+    QString m_Gateway;
+    QString m_GatewayUser;
+    QString m_GatewayPassword;
+
+    bool doGatewayConnect() {
+        QUrl gatewayUrl;
+        gatewayUrl.setScheme("https");
+        if (m_Gateway.contains(':')) {
+            QStringList parts = m_Gateway.split(':');
+            gatewayUrl.setHost(parts[0]);
+            gatewayUrl.setPort(parts[1].toInt());
+        } else {
+            gatewayUrl.setHost(m_Gateway);
+            gatewayUrl.setPort(9443);
+        }
+        gatewayUrl.setPath("/api/connect");
+        QUrl url = gatewayUrl;
+        QNetworkAccessManager nam;
+        nam.setProxy(QNetworkProxy::NoProxy);
+
+        QNetworkRequest request(url);
+        request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+        QString credentials = QString("%1:%2").arg(m_GatewayUser, m_GatewayPassword);
+        QByteArray authData = credentials.toUtf8().toBase64();
+        request.setRawHeader("Authorization", "Basic " + authData);
+
+        QJsonObject body;
+        body["target"] = m_ComputerName;
+        body["port"] = 47989;
+
+        QSslConfiguration sslConfig = QSslConfiguration::defaultConfiguration();
+        sslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
+        request.setSslConfiguration(sslConfig);
+
+        QNetworkReply* reply = nam.post(request, QJsonDocument(body).toJson());
+        QEventLoop loop;
+        QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+        loop.exec();
+
+        if (reply->error() != QNetworkReply::NoError) {
+            qWarning() << "Gateway connect failed:" << reply->errorString();
+            reply->deleteLater();
+            return false;
+        }
+
+        QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+        reply->deleteLater();
+
+        if (!doc.isObject() || !doc.object().contains("token")) {
+            qWarning() << "Gateway response missing token";
+            return false;
+        }
+
+        QString token = doc.object()["token"].toString();
+        NvHTTP::setGlobalGateway(m_Gateway, token);
+
+        qInfo() << "Gateway connected, session:" << doc.object()["session_id"].toString()
+                << "token:" << token;
+        return true;
+    }
 };
 
 Launcher::Launcher(QString computer, QString app,
@@ -229,6 +310,35 @@ Launcher::Launcher(QString computer, QString app,
     d->m_EnableUserpass = enableUserpass;
     d->m_Username = username;
     d->m_Password = password;
+    d->m_State = StateInit;
+    d->m_TimeoutTimer = new QTimer(this);
+    d->m_TimeoutTimer->setSingleShot(true);
+    connect(d->m_TimeoutTimer, &QTimer::timeout,
+            this, &Launcher::onTimeout);
+}
+
+Launcher::Launcher(QString computer, QString app,
+                   StreamingPreferences* preferences,
+                   bool enableUserpass,
+                   QString username,
+                   QString password,
+                   QString gateway,
+                   QString gatewayUser,
+                   QString gatewayPassword,
+                   QObject *parent)
+    : QObject(parent),
+      m_DPtr(new LauncherPrivate(this))
+{
+    Q_D(Launcher);
+    d->m_ComputerName = computer;
+    d->m_AppName = app;
+    d->m_Preferences = preferences;
+    d->m_EnableUserpass = enableUserpass;
+    d->m_Username = username;
+    d->m_Password = password;
+    d->m_Gateway = gateway;
+    d->m_GatewayUser = gatewayUser;
+    d->m_GatewayPassword = gatewayPassword;
     d->m_State = StateInit;
     d->m_TimeoutTimer = new QTimer(this);
     d->m_TimeoutTimer->setSingleShot(true);

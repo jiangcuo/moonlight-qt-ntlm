@@ -13,6 +13,7 @@
 #include <QNetworkProxy>
 
 #define FAST_FAIL_TIMEOUT_MS 2000
+#define FAST_FAIL_TIMEOUT_GW_MS 10000
 #define REQUEST_TIMEOUT_MS 5000
 #define LAUNCH_TIMEOUT_MS 120000
 #define RESUME_TIMEOUT_MS 30000
@@ -26,6 +27,12 @@ NvHTTP::NvHTTP(NvAddress address, uint16_t httpsPort, QSslCertificate serverCert
 
     setAddress(address);
     setHttpsPort(httpsPort);
+
+    if (!s_GlobalGatewayHost.isEmpty()) {
+        m_GatewayHost = s_GlobalGatewayHost;
+        m_GatewayPort = s_GlobalGatewayPort;
+        m_GatewayToken = s_GlobalGatewayToken;
+    }
 
     // Never use a proxy server
     QNetworkProxy noProxy(QNetworkProxy::NoProxy);
@@ -43,6 +50,65 @@ NvHTTP::NvHTTP(NvComputer* computer) :
 void NvHTTP::setServerCert(QSslCertificate serverCert)
 {
     m_ServerCert = serverCert;
+}
+
+QString NvHTTP::s_GlobalGatewayHost;
+int NvHTTP::s_GlobalGatewayPort = 9443;
+QString NvHTTP::s_GlobalGatewayToken;
+
+void NvHTTP::setGatewayMode(const QString& gatewayHost, const QString& token)
+{
+    if (gatewayHost.contains(':')) {
+        QStringList parts = gatewayHost.split(':');
+        m_GatewayHost = parts[0];
+        m_GatewayPort = parts[1].toInt();
+    } else {
+        m_GatewayHost = gatewayHost;
+        m_GatewayPort = 9443;
+    }
+    m_GatewayToken = token;
+}
+
+void NvHTTP::setGlobalGateway(const QString& gatewayHost, const QString& token)
+{
+    if (gatewayHost.contains(':')) {
+        QStringList parts = gatewayHost.split(':');
+        s_GlobalGatewayHost = parts[0];
+        s_GlobalGatewayPort = parts[1].toInt();
+    } else {
+        s_GlobalGatewayHost = gatewayHost;
+        s_GlobalGatewayPort = 9443;
+    }
+    s_GlobalGatewayToken = token;
+}
+
+void NvHTTP::clearGlobalGateway()
+{
+    s_GlobalGatewayHost.clear();
+    s_GlobalGatewayPort = 9443;
+    s_GlobalGatewayToken.clear();
+}
+
+QUrl NvHTTP::buildGatewayProxyUrl(QUrl originalUrl)
+{
+    QUrl proxyUrl;
+    proxyUrl.setScheme("https");
+    proxyUrl.setHost(m_GatewayHost);
+    proxyUrl.setPort(m_GatewayPort);
+
+    QString scheme = originalUrl.scheme();
+    int port = originalUrl.port();
+    QString path = originalUrl.path();
+    if (path.startsWith('/')) path = path.mid(1);
+
+    proxyUrl.setPath(QString("/api/proxy/%1/%2/%3/%4")
+                     .arg(m_GatewayToken, scheme, QString::number(port), path));
+
+    if (originalUrl.hasQuery()) {
+        proxyUrl.setQuery(originalUrl.query());
+    }
+
+    return proxyUrl;
 }
 
 void NvHTTP::setAddress(NvAddress address)
@@ -125,17 +191,16 @@ NvHTTP::getServerInfo(NvLogLevel logLevel, bool fastFail)
 {
     QString serverInfo;
 
-    // Check if we have a pinned cert and HTTPS port for this host yet
+    int fastTimeout = !m_GatewayHost.isEmpty() ? FAST_FAIL_TIMEOUT_GW_MS : FAST_FAIL_TIMEOUT_MS;
+
     if (!m_ServerCert.isNull() && httpsPort() != 0)
     {
         try
         {
-            // Always try HTTPS first, since it properly reports
-            // pairing status (and a few other attributes).
             serverInfo = openConnectionToString(m_BaseUrlHttps,
                                                 "serverinfo",
                                                 nullptr,
-                                                fastFail ? FAST_FAIL_TIMEOUT_MS : REQUEST_TIMEOUT_MS,
+                                                fastFail ? fastTimeout : REQUEST_TIMEOUT_MS,
                                                 logLevel);
             // Throws if the request failed
             verifyResponseStatus(serverInfo);
@@ -144,11 +209,10 @@ NvHTTP::getServerInfo(NvLogLevel logLevel, bool fastFail)
         {
             if (e.getStatusCode() == 401)
             {
-                // Certificate validation error, fallback to HTTP
                 serverInfo = openConnectionToString(m_BaseUrlHttp,
                                                     "serverinfo",
                                                     nullptr,
-                                                    fastFail ? FAST_FAIL_TIMEOUT_MS : REQUEST_TIMEOUT_MS,
+                                                    fastFail ? fastTimeout : REQUEST_TIMEOUT_MS,
                                                     logLevel);
                 verifyResponseStatus(serverInfo);
             }
@@ -161,11 +225,10 @@ NvHTTP::getServerInfo(NvLogLevel logLevel, bool fastFail)
     }
     else
     {
-        // Only use HTTP prior to pairing or fetching HTTPS port
         serverInfo = openConnectionToString(m_BaseUrlHttp,
                                             "serverinfo",
                                             nullptr,
-                                            fastFail ? FAST_FAIL_TIMEOUT_MS : REQUEST_TIMEOUT_MS,
+                                            fastFail ? fastTimeout : REQUEST_TIMEOUT_MS,
                                             logLevel);
         verifyResponseStatus(serverInfo);
 
@@ -689,10 +752,14 @@ NvHTTP::getXmlString(QString xml,
 
 void NvHTTP::handleSslErrors(QNetworkReply* reply, const QList<QSslError>& errors)
 {
+    if (!m_GatewayHost.isEmpty()) {
+        reply->ignoreSslErrors(errors);
+        return;
+    }
+
     bool ignoreErrors = true;
 
     if (m_ServerCert.isNull()) {
-        // We should never make an HTTPS request without a cert
         Q_ASSERT(!m_ServerCert.isNull());
         return;
     }
@@ -763,8 +830,9 @@ NvHTTP::openConnectionToStringIgnoreSsl(QUrl baseUrl,
                  ((arguments != nullptr) ? ("&" + arguments) : "");
     url.setQuery(queryString);
 
-    // Debug: Final URL
-    qInfo() << "[DEBUG] Final request URL:" << url.toString();
+    if (!m_GatewayHost.isEmpty()) {
+        url = buildGatewayProxyUrl(url);
+    }
 
     QNetworkRequest request(url);
 
@@ -915,12 +983,13 @@ NvHTTP::openConnection(QUrl baseUrl,
     QUrl url(baseUrl);
     url.setPath("/" + command);
 
-    // Use a common UID for Moonlight clients to allow them to quit
-    // games for each other (otherwise GFE gets screwed up and it requires
-    // manual intervention to solve).
     url.setQuery("uniqueid=0123456789ABCDEF&uuid=" +
                  QUuid::createUuid().toRfc4122().toHex() +
                  ((arguments != nullptr) ? ("&" + arguments) : ""));
+
+    if (!m_GatewayHost.isEmpty()) {
+        url = buildGatewayProxyUrl(url);
+    }
 
     QNetworkRequest request(url);
 

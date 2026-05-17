@@ -3,6 +3,16 @@
 #include "streaming/streamutils.h"
 #include "backend/richpresencemanager.h"
 
+#include "backend/nvhttp.h"
+
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QNetworkAccessManager>
+#include <QNetworkReply>
+#include <QNetworkProxy>
+#include <QEventLoop>
+#include <QSslConfiguration>
+
 #include <Limelight.h>
 #include "SDL_compat.h"
 #include "utils.h"
@@ -1579,6 +1589,28 @@ bool Session::startConnectionAsync()
         enableGameOptimizations = m_Preferences->gameOptimizations;
     }
 
+    if (!m_Gateway.isEmpty()) {
+        // The gateway session was already created by the CLI launcher
+        // (startstream.cpp::doGatewayConnect) using the user-provided host
+        // address. Re-using it here is critical: the launcher's target IP
+        // is what the user typed, while m_Computer->activeAddress can be
+        // mutated by ComputerManager polling and ends up pointing at e.g.
+        // the host's ExternalIP, which is unreachable from the gateway.
+        m_GatewayToken = NvHTTP::s_GlobalGatewayToken;
+        if (m_GatewayToken.isEmpty()) {
+            // Fallback (CLI launcher did not run, e.g. GUI flow): create the
+            // session here using activeAddress.
+            if (!connectToGateway()) {
+                emit displayLaunchError(tr("Failed to connect to gateway: %1").arg(m_Gateway));
+                return false;
+            }
+        } else {
+            SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                        "Gateway: reusing CLI session token %s",
+                        m_GatewayToken.toLatin1().data());
+        }
+    }
+
     QString rtspSessionUrl;
 
     try {
@@ -1678,6 +1710,21 @@ bool Session::startConnectionAsync()
                                                                          false);
     }
 
+    QByteArray gatewayAddrStr;
+    if (!m_Gateway.isEmpty()) {
+        gatewayAddrStr = m_Gateway.toLatin1();
+        hostInfo.address = gatewayAddrStr.data();
+
+        QByteArray tokenBytes = m_GatewayToken.toLatin1();
+        LiSetGatewayMode(tokenBytes.constData());
+
+        m_StreamConfig.streamingRemotely = STREAM_CFG_REMOTE;
+        m_StreamConfig.packetSize = 1024;
+
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Gateway mode: routing through %s", gatewayAddrStr.data());
+    }
+
     int err = LiStartConnection(&hostInfo, &m_StreamConfig, &k_ConnCallbacks,
                                 &m_VideoCallbacks, &m_AudioCallbacks,
                                 NULL, 0, NULL, 0);
@@ -1713,12 +1760,81 @@ void Session::setShouldExitAfterQuit()
     m_ShouldExitAfterQuit = true;
 }
 
-// 新增：setUserCredentials方法实现
 void Session::setUserCredentials(const QString& username, const QString& password)
 {
     m_EnableUserpass = true;
     m_Username = username;
     m_Password = password;
+}
+
+void Session::setGateway(const QString& gateway, const QString& gatewayUser, const QString& gatewayPassword)
+{
+    m_Gateway = gateway;
+    m_GatewayUser = gatewayUser;
+    m_GatewayPassword = gatewayPassword;
+}
+
+bool Session::connectToGateway()
+{
+    QUrl url;
+    url.setScheme("https");
+    if (m_Gateway.contains(':')) {
+        QStringList parts = m_Gateway.split(':');
+        url.setHost(parts[0]);
+        url.setPort(parts[1].toInt());
+    } else {
+        url.setHost(m_Gateway);
+        url.setPort(9443);
+    }
+    url.setPath("/api/connect");
+    QNetworkAccessManager nam;
+    nam.setProxy(QNetworkProxy::NoProxy);
+
+    QNetworkRequest request(url);
+    request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
+
+    QString credentials = QString("%1:%2").arg(m_GatewayUser, m_GatewayPassword);
+    QByteArray authData = credentials.toUtf8().toBase64();
+    request.setRawHeader("Authorization", "Basic " + authData);
+
+    QJsonObject body;
+    body["target"] = m_Computer->activeAddress.address();
+    body["port"] = m_Computer->activeAddress.port() > 0 ? m_Computer->activeAddress.port() : 47989;
+
+    QSslConfiguration sslConfig = QSslConfiguration::defaultConfiguration();
+    sslConfig.setPeerVerifyMode(QSslSocket::VerifyNone);
+    request.setSslConfiguration(sslConfig);
+
+    QNetworkReply* reply = nam.post(request, QJsonDocument(body).toJson());
+    QEventLoop loop;
+    QObject::connect(reply, &QNetworkReply::finished, &loop, &QEventLoop::quit);
+    loop.exec();
+
+    if (reply->error() != QNetworkReply::NoError) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION,
+                     "Gateway connect failed: %s", reply->errorString().toLatin1().data());
+        reply->deleteLater();
+        return false;
+    }
+
+    QJsonDocument doc = QJsonDocument::fromJson(reply->readAll());
+    reply->deleteLater();
+
+    if (!doc.isObject() || !doc.object().contains("token")) {
+        SDL_LogError(SDL_LOG_CATEGORY_APPLICATION, "Gateway response missing token");
+        return false;
+    }
+
+    m_GatewayToken = doc.object()["token"].toString();
+
+    NvHTTP::setGlobalGateway(m_Gateway, m_GatewayToken);
+
+    SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                "Gateway connected, session: %s, token: %s",
+                doc.object()["session_id"].toString().toLatin1().data(),
+                m_GatewayToken.toLatin1().data());
+
+    return true;
 }
 
 class ExecThread : public QThread
