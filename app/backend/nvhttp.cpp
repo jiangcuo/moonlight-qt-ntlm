@@ -28,6 +28,12 @@ NvHTTP::NvHTTP(NvAddress address, uint16_t httpsPort, QSslCertificate serverCert
     setAddress(address);
     setHttpsPort(httpsPort);
 
+    if (!s_GlobalGatewayHost.isEmpty()) {
+        m_GatewayHost = s_GlobalGatewayHost;
+        m_GatewayPort = s_GlobalGatewayPort;
+        m_GatewayToken = s_GlobalGatewayToken;
+    }
+
     // Never use a proxy server
     QNetworkProxy noProxy(QNetworkProxy::NoProxy);
     m_Nam->setProxy(noProxy);
@@ -42,6 +48,52 @@ NvHTTP::NvHTTP(NvComputer* computer, QNetworkAccessManager* nam) :
 void NvHTTP::setServerCert(QSslCertificate serverCert)
 {
     m_ServerCert = serverCert;
+}
+
+QString NvHTTP::s_GlobalGatewayHost;
+int NvHTTP::s_GlobalGatewayPort = 9443;
+QString NvHTTP::s_GlobalGatewayToken;
+
+void NvHTTP::setGlobalGateway(const QString& gatewayHost, const QString& token)
+{
+    if (gatewayHost.contains(':')) {
+        QStringList parts = gatewayHost.split(':');
+        s_GlobalGatewayHost = parts[0];
+        s_GlobalGatewayPort = parts[1].toInt();
+    } else {
+        s_GlobalGatewayHost = gatewayHost;
+        s_GlobalGatewayPort = 9443;
+    }
+    s_GlobalGatewayToken = token;
+}
+
+void NvHTTP::clearGlobalGateway()
+{
+    s_GlobalGatewayHost.clear();
+    s_GlobalGatewayPort = 9443;
+    s_GlobalGatewayToken.clear();
+}
+
+QUrl NvHTTP::buildGatewayProxyUrl(QUrl originalUrl)
+{
+    QUrl proxyUrl;
+    proxyUrl.setScheme("https");
+    proxyUrl.setHost(m_GatewayHost);
+    proxyUrl.setPort(m_GatewayPort);
+
+    QString scheme = originalUrl.scheme();
+    int port = originalUrl.port();
+    QString path = originalUrl.path();
+    if (path.startsWith('/')) path = path.mid(1);
+
+    proxyUrl.setPath(QString("/api/proxy/%1/%2/%3/%4")
+                     .arg(m_GatewayToken, scheme, QString::number(port), path));
+
+    if (originalUrl.hasQuery()) {
+        proxyUrl.setQuery(originalUrl.query());
+    }
+
+    return proxyUrl;
 }
 
 void NvHTTP::setAddress(NvAddress address)
@@ -610,6 +662,11 @@ NvHTTP::getXmlString(QString xml,
 
 void NvHTTP::handleSslErrors(QNetworkReply* reply, const QList<QSslError>& errors)
 {
+    if (!m_GatewayHost.isEmpty()) {
+        reply->ignoreSslErrors(errors);
+        return;
+    }
+
     bool ignoreErrors = true;
 
     if (m_ServerCert.isNull()) {
@@ -676,6 +733,10 @@ NvHTTP::openConnectionToStringIgnoreSsl(QUrl baseUrl,
     url.setQuery("uniqueid=0123456789ABCDEF&uuid=" +
                  QUuid::createUuid().toRfc4122().toHex() +
                  ((arguments != nullptr) ? ("&" + arguments) : ""));
+
+    if (!m_GatewayHost.isEmpty()) {
+        url = buildGatewayProxyUrl(url);
+    }
 
     QNetworkRequest request(url);
 
@@ -779,6 +840,10 @@ NvHTTP::openConnection(QUrl baseUrl,
     url.setQuery("uniqueid=0123456789ABCDEF&uuid=" +
                  QUuid::createUuid().toRfc4122().toHex() +
                  ((arguments != nullptr) ? ("&" + arguments) : ""));
+
+    if (!m_GatewayHost.isEmpty()) {
+        url = buildGatewayProxyUrl(url);
+    }
 
     QNetworkRequest request(url);
 

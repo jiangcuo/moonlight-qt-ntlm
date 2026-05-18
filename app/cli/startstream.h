@@ -31,7 +31,17 @@ public:
                       QString username,
                       QString password,
                       QObject *parent = nullptr);
-    
+
+    explicit Launcher(QString computer, QString app,
+                      StreamingPreferences* preferences,
+                      bool enableUserpass,
+                      QString username,
+                      QString password,
+                      QString gateway,
+                      QString gatewayUser,
+                      QString gatewayPassword,
+                      QObject *parent = nullptr);
+
     ~Launcher();
     Q_INVOKABLE void execute(ComputerManager *manager);
     Q_INVOKABLE void quitRunningApp();

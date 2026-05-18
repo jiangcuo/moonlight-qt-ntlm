@@ -992,9 +992,16 @@ int main(int argc, char *argv[])
             bool enableUserpass = streamParser.getEnableUserpass();
             QString username = streamParser.getUsername();
             QString password = streamParser.getPassword();
+            QString gateway = streamParser.getGateway();
+            QString gatewayUser = streamParser.getGatewayUser();
+            QString gatewayPassword = streamParser.getGatewayPassword();
 
             CliStartStream::Launcher* launcher;
-            if (enableUserpass && !username.isEmpty() && !password.isEmpty()) {
+            if (!gateway.isEmpty()) {
+                launcher = new CliStartStream::Launcher(host, appName, preferences,
+                                                        enableUserpass, username, password,
+                                                        gateway, gatewayUser, gatewayPassword, &app);
+            } else if (enableUserpass && !username.isEmpty() && !password.isEmpty()) {
                 // 使用用户名密码认证的构造函数
                 launcher = new CliStartStream::Launcher(host, appName, preferences,
                                                         enableUserpass, username, password, &app);

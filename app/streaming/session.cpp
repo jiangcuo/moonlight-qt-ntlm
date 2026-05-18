@@ -2,6 +2,7 @@
 #include "settings/streamingpreferences.h"
 #include "streaming/streamutils.h"
 #include "backend/richpresencemanager.h"
+#include "backend/nvhttp.h"
 
 #include <Limelight.h>
 #include "SDL_compat.h"
@@ -1683,6 +1684,33 @@ bool Session::startConnectionAsync()
                                                                          false);
     }
 
+    QByteArray gatewayAddrStr;
+    if (!m_Gateway.isEmpty()) {
+        // Reuse the session token created by the CLI launcher
+        // (startstream.cpp::doGatewayConnect). Re-creating the gateway session
+        // with m_Computer->activeAddress is unsafe because activeAddress can
+        // be mutated by ComputerManager polling (e.g. swapped to ExternalIP),
+        // which the gateway can't reach.
+        m_GatewayToken = NvHTTP::s_GlobalGatewayToken;
+        if (m_GatewayToken.isEmpty()) {
+            emit displayLaunchError(tr("Gateway token missing - did the CLI launcher run?"));
+            return false;
+        }
+
+        gatewayAddrStr = m_Gateway.toUtf8();
+        hostInfo.address = gatewayAddrStr.data();
+
+        QByteArray tokenBytes = m_GatewayToken.toUtf8();
+        LiSetGatewayMode(tokenBytes.constData());
+
+        m_StreamConfig.streamingRemotely = STREAM_CFG_REMOTE;
+        m_StreamConfig.packetSize = 1024;
+
+        SDL_LogInfo(SDL_LOG_CATEGORY_APPLICATION,
+                    "Gateway mode: routing through %s (token %s)",
+                    gatewayAddrStr.data(), m_GatewayToken.toUtf8().constData());
+    }
+
     int err = LiStartConnection(&hostInfo, &m_StreamConfig, &k_ConnCallbacks,
                                 &m_VideoCallbacks, &m_AudioCallbacks,
                                 NULL, 0, NULL, 0);
@@ -1732,6 +1760,13 @@ void Session::setUserCredentials(const QString& username, const QString& passwor
     m_EnableUserpass = true;
     m_Username = username;
     m_Password = password;
+}
+
+void Session::setGateway(const QString& gateway, const QString& gatewayUser, const QString& gatewayPassword)
+{
+    m_Gateway = gateway;
+    m_GatewayUser = gatewayUser;
+    m_GatewayPassword = gatewayPassword;
 }
 
 void Session::start()

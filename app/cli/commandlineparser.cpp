@@ -346,6 +346,10 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
     parser.addValueOption("username", "Username for authentication");
     parser.addValueOption("password", "Password for authentication");
 
+    parser.addValueOption("gateway", "Gateway server address for proxied connections");
+    parser.addValueOption("gateway-user", "Gateway authentication username");
+    parser.addValueOption("gateway-password", "Gateway authentication password");
+
     parser.addFlagOption("720",  "1280x720 resolution");
     parser.addFlagOption("1080", "1920x1080 resolution");
     parser.addFlagOption("1440", "2560x1440 resolution");
@@ -391,6 +395,16 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
         }
         m_Username = parser.value("username");
         m_Password = parser.value("password");
+    }
+
+    if (parser.isSet("gateway")) {
+        m_Gateway = parser.value("gateway");
+        if (parser.isSet("gateway-user")) {
+            m_GatewayUser = parser.value("gateway-user");
+        }
+        if (parser.isSet("gateway-password")) {
+            m_GatewayPassword = parser.value("gateway-password");
+        }
     }
 
     // Resolve display's width and height
@@ -621,4 +635,19 @@ QString StreamCommandLineParser::getUsername() const
 QString StreamCommandLineParser::getPassword() const
 {
     return m_Password;
+}
+
+QString StreamCommandLineParser::getGateway() const
+{
+    return m_Gateway;
+}
+
+QString StreamCommandLineParser::getGatewayUser() const
+{
+    return m_GatewayUser;
+}
+
+QString StreamCommandLineParser::getGatewayPassword() const
+{
+    return m_GatewayPassword;
 }
