@@ -462,6 +462,22 @@ void StreamCommandLineParser::parse(const QStringList &args, StreamingPreference
     // Resolve --display option
     if (parser.isSet("display-mode")) {
         preferences->windowMode = mapValue(m_WindowModeMap, parser.getChoiceOptionValue("display-mode"));
+
+        // The streaming window mode (windowMode) only applies once streaming
+        // actually starts. Before that, the CLI "connecting" screen is the Qt
+        // GUI window, whose state is governed by uiDisplayMode. Keep them in
+        // sync so e.g. --display-mode fullscreen also shows the connecting
+        // screen full-screen instead of as a window that only goes fullscreen
+        // after the stream begins.
+        switch (preferences->windowMode) {
+        case StreamingPreferences::WM_FULLSCREEN:
+        case StreamingPreferences::WM_FULLSCREEN_DESKTOP:
+            preferences->uiDisplayMode = StreamingPreferences::UI_FULLSCREEN;
+            break;
+        case StreamingPreferences::WM_WINDOWED:
+            preferences->uiDisplayMode = StreamingPreferences::UI_WINDOWED;
+            break;
+        }
     }
 
     // Resolve --vsync and --no-vsync options
