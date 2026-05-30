@@ -1,3 +1,10 @@
+moonlight-qt (6.1.1) trixie; urgency=medium
+
+  * 添加cli全屏参数
+  * 添加网关功能
+
+ -- Lierfang Team <service@lierfang.com>  Sat, 30 May 2026 08:47:36 +0000
+
 moonlight-qt (6.1.0) bookworm; urgency=medium
 
   * 初始打包
